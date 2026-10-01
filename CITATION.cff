@@ -6,7 +6,8 @@ authors:
   - family-names: Lee
     given-names: Ugwiyeon
     affiliation: "Korea Gas Safety Corporation"
-version: 2.0.0
+version: 2.0.1
+license: MIT
 date-released: 2026-10-01
 repository-code: "https://github.com/lyullee/saga-py"
 url: "https://github.com/lyullee/saga-py"

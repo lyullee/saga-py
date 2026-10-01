@@ -1,5 +1,11 @@
 # SAGA-PY
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23084441.svg)](https://doi.org/10.5281/zenodo.23084441)
+
+The badge DOI resolves to the latest archived release. Earlier versions retain their own DOIs.
+
+Original project software and associated documentation are available under the [MIT license](LICENSE). Bundled third-party libraries and assets retain their respective notices and terms.
+
 Python/FastAPI safety-knowledge assistant for Korean gas standards, law and HAZOP analysis. SAGA-PY supports a standalone document-grounded chat and separate, direct APIs for a hydrogen-station digital twin's main conversation and selected-sensor analysis.
 
 **Public source-only release:** private PDFs, local indexes/databases, credentials, generated evaluation responses and the former Java service are not included. Document-grounded use requires your own lawful corpus and provider key.
