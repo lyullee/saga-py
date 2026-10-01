@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the archived release."
+type: software
+title: "SAGA-PY: Safety AI Governance Agent"
+authors:
+  - family-names: Lee
+    given-names: Ugwiyeon
+    affiliation: "Korea Gas Safety Corporation"
+version: 2.0.0
+date-released: 2026-10-01
+repository-code: "https://github.com/lyullee/saga-py"
+url: "https://github.com/lyullee/saga-py"
+abstract: >-
+  A Python safety-knowledge assistant with document-grounded retrieval and
+  separate direct-analysis APIs for hydrogen-station digital twins.
