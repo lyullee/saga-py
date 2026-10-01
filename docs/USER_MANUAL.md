@@ -16,11 +16,10 @@ Run:
 
 ```powershell
 .venv\Scripts\saga doctor
-.venv\Scripts\saga models
 .venv\Scripts\saga serve
 ```
 
-Open `http://127.0.0.1:8090`. If the provider key changed while PyCharm was open, restart the SAGA process. A 401 `invalid_api_key` is a provider credential/configuration problem, not a retrieval failure. Check the provider actually selected and the effective environment. No automatic provider failover is performed.
+Open `http://127.0.0.1:8090`. Use `.venv\Scripts\saga models` only when a **Service Hub** key is configured; this command lists Service Hub models, not Groq models. If the provider key changed while PyCharm was open, restart the SAGA process. A 401 `invalid_api_key` is a provider credential/configuration problem, not a retrieval failure. Check the provider actually selected and the effective environment. No automatic provider failover is performed.
 
 ## 2. Build the local document index
 
@@ -63,3 +62,52 @@ The HAZOP rules API supports inspection, monitoring-readiness checks, threshold 
 Run `.venv\Scripts\python -m pytest -q` after code/config changes. Back up the corpus, SQLite database, aliases and HAZOP rules before reindex or import. Rotate provider/admin keys if disclosed. When exposing the service beyond localhost, use an authenticated HTTPS reverse proxy, narrow network access and an explicit data-retention policy. Do not treat generated text, English translation or a virtual incident response as a substitute for current official standards or competent field judgment.
 
 For architecture, API families, privacy and limits, see [Technical Report](TECHNICAL_REPORT.md). For the twin protocol, see [Digital Twin HAZOP API](DIGITAL_TWIN_HAZOP_API.md).
+
+## 9. Worked examples
+
+### Standards question with English output
+
+Select **English**, **Standards & law**, **RAG evidence**, and a configured provider. Ask: “What conditions apply to a hydrogen-storage tightness test?” A useful answer states the relevant document/revision and exact applicability, includes citation cards and separates source-backed requirements from general explanation. Open the PDF at the cited page and confirm whether the clause refers to the equipment and operating phase in your question. The English rendering is for convenience; the cited Korean source controls the precise interpretation. If no suitable indexed document exists, the system should not invent a clause number.
+
+### Operations or incident source question
+
+Select **Operations & faults** for public NREL-style operating observations or **Incident cases** for HIAD-style case narratives. Ask a specific question about a metric, component or event. These modes search their own indexed source groups; English questions remain in English for those source libraries. Distinguish observed frequencies or individual case details from binding rules. A numerical result should be quoted only when the source and its denominator/time basis are available.
+
+### General chat
+
+Select **General chat** when you want an exploratory explanation without document retrieval. The answer must be treated as model knowledge, even if it sounds regulatory. Switch back to RAG for source-based compliance questions. The language toggle still controls the new answer's language; it does not confer citations on a general-chat reply.
+
+### Digital-twin warning
+
+Open the twin's monitor and choose a warning sensor. The sensor pane shows its tag, value, quality, related signals and staged guidance. Its adjacent SAGA assistant can answer a focused question, such as “What should I verify before isolating this bank?” If a consequence result is present, inspect its source pressure/temperature, leak assumption and status. The twin calculates that result first; SAGA explains it. Use the twin's virtual safety buttons to practice a command, then verify closure feedback and flow in a later frame. A textual SAGA answer by itself does not execute an action.
+
+## 10. Administrator sequence for a new corpus
+
+1. Inventory documents, revision dates, source rights and expected subject coverage. Keep a copy outside the index and decide which sources are normative, operational or incident records.
+2. Put permitted PDFs in the configured upload directory. Do not commit the directory or email the key/corpus with bug reports.
+3. Run `saga doctor` and `saga index`; investigate each failed/needs-OCR item. Use OCR recovery selectively and verify the recovered words against the original page.
+4. Search a known code and phrase in the UI. Confirm the source title, page, section hierarchy and link. Test a question whose answer is present, one whose answer is absent, and one that asks for a numerical requirement. The absent case must not acquire a fabricated citation.
+5. Test provider selection separately for Service Hub and Groq, including a missing/invalid key. Switching the browser selector is manual and must not silently fall back to the other provider.
+6. Exercise Korean and English questions in each knowledge mode. For English standards answers, check that the cited Korean clauses still support the translated claim, including units, exceptions and negation.
+7. Record corpus/index revision and run the offline suite. If synchronization or reindexing changes the answer, compare its retrieved chunks and source revision before accepting it.
+
+The optional law API uses `SAGA_LAW_API_OC`, separate from either LLM key. `saga law-sync` can create local PDF snapshots; verify current official text because a local snapshot may become stale. Administrator API calls require the configured token according to the server contract. Restrict who can upload, delete and reindex, because changing the corpus changes future answers.
+
+## 11. API and operations quick reference
+
+| Task | Entry point | Expected result |
+|---|---|---|
+| Health | `GET /api/health` | Provider readiness and index summary. |
+| Model choices | `GET /api/models` | UI model metadata; `saga models` CLI lists Service Hub only. |
+| Chat | `POST /api/chat` | Completed JSON answer, citations and mode. |
+| Streaming chat | `POST /api/chat/stream` | SSE status, answer deltas and final event. |
+| Documents | `GET /api/documents` | Indexed document cards. |
+| Twin main | `POST /api/integrations/digital-twin/main` | One-pass station answer from supplied context. |
+| Twin sensor | `POST /api/integrations/digital-twin/sensor` | One-pass selected-sensor answer. |
+| HAZOP rules | `GET /api/hazop/rules` | Current rule definitions. |
+
+For an English API request, set `"language":"en"`; omission keeps Korean. The interface switch and API field control **new** responses, not existing log entries. If using streaming clients, consume the final `answer`/`done` event and handle `error`; a partial draft is not a final validated response. All dimensions and sensor values received from the twin are structured inputs, not values the LLM should calculate independently.
+
+## 12. Service isolation and incident checklist
+
+When both projects run on one PC, confirm the digital twin listens on **8000** and SAGA on **8090**. A port mix-up may show the wrong interface even though the URL responds. Check each `/api/health`, the process PID bound to each port and the twin's configured SAGA base URL. Keep the twin's main assistant, selected-sensor assistant and SAGA website general chat as three separate channels when diagnosing response mix-ups. An HTTP 200 from one route does not prove the other routes or providers are configured. For a bad answer, capture the selected provider/model, mode/language, question, relevant source IDs, twin job/sensor/time and whether the consequence calculation succeeded; redact keys and confidential source text before sharing.

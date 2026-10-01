@@ -62,8 +62,71 @@ Public/read operations include `/api/health`, `/api/config`, `/api/models`, `/ap
 
 The `.env.example` file is a template. Put real keys in an untracked `.env` or secure environment; never commit them. Index and upload directories contain source documents and may contain confidential text. Chat/feedback logs can contain user questions and excerpts; apply access control, retention and deletion appropriate to the documents. An externally reachable 8090 service should use TLS, limited network exposure, authentication and rate controls. Provider API requests may transfer question/evidence excerpts off-host under the selected provider's terms. The public code repository is intentionally source-only.
 
-Run `saga doctor` before indexing, `saga index` to build/update local data, `saga models` to verify provider reachability, and `saga serve` to start. Use `python -m pytest -q` for the unit/integration suite; network-backed answer quality evaluations require separate credentials/corpus and should not be mistaken for offline unit tests. Version the configuration and test representative Korean and English questions whenever retrieval or prompts change.
+Run `saga doctor` before indexing, `saga index` to build/update local data, and `saga serve` to start. `saga models` lists **Service Hub** models and requires its key; it is not a Groq connectivity check. Use `python -m pytest -q` for the unit/integration suite; network-backed answer quality evaluations require separate credentials/corpus and should not be mistaken for offline unit tests. Version the configuration and test representative Korean and English questions whenever retrieval or prompts change.
 
 ## 8. Limitations
 
 RAG quality depends on the document set, OCR, currency of law/standards, metadata and model availability. The public clone has no included searchable corpus. English translation can alter nuance even when citation markers are preserved. HAZOP rule matches are scenario candidates and require actual instrument/field confirmation. The system is neither a legal authority nor an emergency control system. Use current official documents, site procedures and qualified reviewers for real decisions.
+
+## 9. Configuration reference
+
+Values below are defaults from `python/saga/config.py`; deployment environment or local `.env` can override them. The public `.env.example` is a template and deliberately contains no valid key.
+
+| Variable | Default / purpose |
+|---|---|
+| `SAGA_HOST`, `SAGA_PORT` | `127.0.0.1`, `8090` service binding. |
+| `OPEN_AI_SERVICE_HUB_API_KEY` | No default; Service Hub credential. |
+| `GROQ_API_KEY` | No default; Groq credential, selected manually. |
+| `SAGA_SERVICE_HUB_BASE_URL` | Service Hub OpenAI-compatible `/v1` endpoint. |
+| `GROQ_BASE_URL` | `https://api.groq.com/openai/v1`. |
+| `SAGA_MODEL`, `SAGA_FAST_MODEL`, `SAGA_DIRECT_MODEL` | Main, fast and direct Service Hub model IDs. |
+| `GROQ_MODEL`, `GROQ_FAST_MODEL`, `GROQ_DIRECT_MODEL` | Corresponding Groq model IDs. |
+| `SAGA_UPLOAD_DIR` | Local `saga-uploads` PDF directory, excluded from Git. |
+| `SAGA_DATABASE_PATH` | Local `data/saga.db`, excluded from Git. |
+| `SAGA_RETRIEVAL_LIMIT` | 32 initial search hits (allowed 5–100). |
+| `SAGA_CONTEXT_LIMIT` | 24 answer-context items (allowed 3–30). |
+| `SAGA_MAX_CONTEXT_CHARS` | 42,000 context characters (allowed 5,000–100,000). |
+| `SAGA_HYBRID_SEARCH_ENABLED` | `true` for lexical + hash n-gram vector search. |
+| `SAGA_VECTOR_MODEL` | `hash-ngram-v1` local representation. |
+| `SAGA_ANSWER_REVIEW_ENABLED` | `true`; review may add latency and provider calls. |
+| `SAGA_ANSWER_LENGTH` | `standard`; per-request options include concise, detailed and very detailed. |
+| `SAGA_LAW_API_OC` | Optional separate national law API credential. |
+| `SAGA_ADMIN_TOKEN` | Empty by default; set and protect for externally reachable administration. |
+
+The code's default host is localhost. A developer who copies a different older `.env` may still bind to all interfaces; inspect the local configuration and the actual bound address with OS network tools. `saga models` lists Service Hub models only. The browser provider selection is persisted client-side, while the server validates the corresponding credential on each request.
+
+## 10. Document lifecycle and failure handling
+
+`PdfIndexer` opens a PDF, extracts page text and metadata, builds section-oriented chunks and writes database rows. An unchanged file can be skipped during incremental indexing; `--force` rebuilds it. Poor text extraction is flagged for OCR rather than treated as reliable empty evidence. The optional `--service-hub-ocr` path uses a vision model and can incur external API cost. Law synchronization creates local PDF snapshots to make citations inspectable. NREL/HIAD acquisition and evaluation scripts are separate workflows; the public repository includes scripts but no fetched files or generated answer data.
+
+At query time the pipeline normalizes the question and can reject a truly underspecified reference (“this” with no topic), while broad but meaningful safety questions proceed. It distinguishes standards, operations and incident knowledge modes to avoid mixing normative requirements with observed statistics or incident narratives. Search candidates are ranked and restricted before generation. Exact scope matters: a prohibition applying to one activity must not be broadened to an unrelated vehicle movement or facility duty. Answers with weak source match are labeled as limited or LLM-only. Secondary review is optional; a review output that introduces unsupported obligations or numbers is not automatically accepted. Citation validation is a post-generation guard and cannot compensate for an incomplete or outdated corpus.
+
+A provider 401 should prompt credential/provider checks; a 429 may require waiting or reduced request rate. A retrieval miss should prompt source/index inspection, not a higher creativity setting. Streaming disconnections may leave the browser without a final event; clients should present the error and allow retry without claiming that the answer was validated. The English path adds a translation pass before standards retrieval and an English-rendering pass after the Korean result. The final translation is streamed as visible deltas where the selected provider supports streaming. The document citation cards preserve original metadata.
+
+## 11. Interface and API contract examples
+
+General document-grounded question:
+
+```json
+POST /api/chat
+{"message":"What are the inspection conditions for hydrogen storage?",
+ "provider":"groq", "language":"en", "mode":"rag",
+ "knowledge_mode":"standards", "answer_length":"detailed"}
+```
+
+The response includes `answer`, `citations`, `answer_mode`, `mode`, `knowledge_mode`, `language`, `model`, conversation/log IDs and retrieval metadata. The stream variant sends named SSE events such as status, visible draft deltas, final answer and done/error. A caller must not infer that a citation exists when `answer_mode` is `llm_only`.
+
+Digital-twin main integration:
+
+```json
+POST /api/integrations/digital-twin/main
+{"question":"What should I check first?", "provider":"groq", "language":"en",
+ "request_kind":"user_query", "context":{"station_status":"WARNING",
+ "current_signals":{}, "impact_results":[]}}
+```
+
+The twin normally supplies a much richer context. The sensor endpoint uses a separate schema with `sensor_id`, selected-sensor `context`, `request_kind` and output language. These calls are short direct analyses and do not use the general chat's document search, conversation log or review pipeline. The twin's consequence engine provides `impact_results`; SAGA must not manufacture missing numbers. For full field definitions and response models, inspect `/openapi.json` or `schemas.py` on the version actually deployed.
+
+## 12. Testing and change control
+
+The public offline suite exercises settings, indexing, SQLite and hybrid retrieval, source handling, RAG quality guards, provider selection, HAZOP contracts, twin direct boundaries and English output. A single cross-code regression requires the operator's local private index and is skipped in a source-only checkout. A full acceptance run should add a separately governed corpus, fixed Korean/English query set, current documents, manual review of citations and failure-case checks for absent keys, OCR problems, false positives and incident-state contradictions. Preserve model IDs and corpus revision with each evaluation; a passing unit suite alone is not evidence of regulatory correctness.
