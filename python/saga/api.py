@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -294,7 +295,106 @@ def _sensor_assistant_prompt(request: DigitalTwinSensorAssistantRequest) -> str:
     )[:10000]
 
 
-async def _isolated_direct_answer(prompt: str, provider: str, max_tokens: int) -> dict:
+_DIRECT_MEASUREMENT_RE = re.compile(
+    r"(?<![\w.])"
+    r"[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)"
+    r"(?:\s*(?:-|~|–|—|to|부터|에서)\s*[+-]?(?:\d+(?:[.,]\d+)?|\.\d+))?"
+    r"\s*(?:"
+    r"kW\s*/\s*m(?:\^?2|²)|W\s*/\s*m(?:\^?2|²)|"
+    r"kg\s*/\s*s|g\s*/\s*s|kg\s*/\s*h|kg\s*/\s*min|"
+    r"vol\s*%\s*(?:_?\s*H2)?|ppm|"
+    r"MPa|kPa|Pa|bar|"
+    r"°\s*C|℃|deg\s*C|degrees?\s+C(?:elsius)?|"
+    r"millimet(?:er|re)s?|centimet(?:er|re)s?|met(?:er|re)s?|mm|cm|m|"
+    r"seconds?|secs?|minutes?|mins?|hours?|hrs?|s|min|h|"
+    r"kilograms?|grams?|kg|g|%"
+    r")(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+
+
+def _canonical_measurement(value: str) -> str:
+    normalized = value.strip().lower().replace(",", ".")
+    normalized = normalized.replace("℃", "°c").replace("²", "2")
+    normalized = re.sub(r"degrees?\s+c(?:elsius)?", "°c", normalized)
+    normalized = re.sub(r"deg\s*c", "°c", normalized)
+    normalized = re.sub(r"\bseconds?\b|\bsecs?\b", "s", normalized)
+    normalized = re.sub(r"\bminutes?\b|\bmins?\b", "min", normalized)
+    normalized = re.sub(r"\bhours?\b|\bhrs?\b", "h", normalized)
+    normalized = re.sub(r"\bmillimet(?:er|re)s?\b", "mm", normalized)
+    normalized = re.sub(r"\bcentimet(?:er|re)s?\b", "cm", normalized)
+    normalized = re.sub(r"\bmet(?:er|re)s?\b", "m", normalized)
+    normalized = re.sub(r"\bkilograms?\b", "kg", normalized)
+    normalized = re.sub(r"\bgrams?\b", "g", normalized)
+    normalized = re.sub(r"\s+", "", normalized)
+    return normalized
+
+
+def _guard_direct_measurements(answer: str, allowed_text: str, language: str | None = None) -> str:
+    """Remove precise value/unit claims absent from the supplied direct prompt.
+
+    Direct digital-twin responses intentionally have no RAG review pass.  This
+    guard therefore treats the serialized live context as the numeric source of
+    truth.  It removes the complete sentence containing an unsupported
+    measurement instead of silently changing a number.
+    """
+    if not answer:
+        return answer
+    allowed = {
+        _canonical_measurement(match.group(0))
+        for match in _DIRECT_MEASUREMENT_RE.finditer(allowed_text)
+    }
+    resolved_language = language or ("ko" if re.search(r"[가-힣]", allowed_text + answer) else "en")
+    notice = (
+        "입력 데이터에 없는 구체 수치는 제시하지 않습니다. 현장 계측값과 적용 기준을 확인하세요."
+        if resolved_language == "ko"
+        else "No precise value was supplied for this point; verify the live measurement and applicable procedure."
+    )
+    parts = re.split(r"(?<=[.!?])\s+|\n+", answer)
+    cleaned: list[str] = []
+    inserted_notice = False
+    for part in parts:
+        stripped = part.strip()
+        if not stripped:
+            continue
+        measurements = {
+            _canonical_measurement(match.group(0))
+            for match in _DIRECT_MEASUREMENT_RE.finditer(stripped)
+        }
+        if measurements - allowed:
+            if not inserted_notice:
+                cleaned.append(notice)
+                inserted_notice = True
+            continue
+        cleaned.append(stripped)
+    return "\n\n".join(cleaned)
+
+
+def _guarded_stream_chunks(answer: str, max_chars: int = 56) -> list[str]:
+    """Split a validated answer into display-sized chunks for a typing effect."""
+    if not answer:
+        return []
+    chunks: list[str] = []
+    for paragraph in answer.splitlines(keepends=True):
+        remaining = paragraph
+        while len(remaining) > max_chars:
+            boundary = max(
+                remaining.rfind(" ", 0, max_chars + 1),
+                remaining.rfind(". ", 0, max_chars + 1) + 1,
+                remaining.rfind("다. ", 0, max_chars + 1) + 2,
+            )
+            if boundary <= 0:
+                boundary = max_chars
+            chunks.append(remaining[:boundary])
+            remaining = remaining[boundary:]
+        if remaining:
+            chunks.append(remaining)
+    return chunks
+
+
+async def _isolated_direct_answer(
+    prompt: str, provider: str, max_tokens: int, language: str | None = None,
+) -> dict:
     _digital_twin_provider_ready(provider)
     model, effort = _digital_twin_direct_model(provider)
     try:
@@ -305,18 +405,22 @@ async def _isolated_direct_answer(prompt: str, provider: str, max_tokens: int) -
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"직답 LLM 호출 실패: {exc}") from exc
+    answer = _guard_direct_measurements(answer, prompt, language)
     return {"answer": answer, "model": model, "provider": provider}
 
 
-def _isolated_direct_stream(prompt: str, provider: str, max_tokens: int) -> StreamingResponse:
+def _isolated_direct_stream(
+    prompt: str, provider: str, max_tokens: int, language: str | None = None,
+) -> StreamingResponse:
     _digital_twin_provider_ready(provider)
     model, effort = _digital_twin_direct_model(provider)
 
     async def events():
-        queue: asyncio.Queue[str] = asyncio.Queue()
-
         async def on_delta(text: str) -> None:
-            await queue.put(text)
+            # Buffer provider tokens.  Emitting them before validation would
+            # briefly expose an invented measurement even if the final answer
+            # were corrected moments later.
+            return None
 
         async def run() -> str:
             with app.state.reasoner.use_provider(provider):
@@ -325,22 +429,14 @@ def _isolated_direct_stream(prompt: str, provider: str, max_tokens: int) -> Stre
                     on_delta=on_delta, disable_reasoning=effort is None,
                 )
 
-        task = asyncio.create_task(run())
         try:
-            while not task.done() or not queue.empty():
-                try:
-                    delta = await asyncio.wait_for(queue.get(), timeout=0.25)
-                except asyncio.TimeoutError:
-                    continue
+            answer = _guard_direct_measurements(await run(), prompt, language)
+            for delta in _guarded_stream_chunks(answer):
                 yield f"event: token\ndata: {json.dumps({'text': delta}, ensure_ascii=False)}\n\n"
-            answer = await task
             payload = {"answer": answer, "model": model, "provider": provider}
             yield f"event: answer\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {json.dumps({'detail': str(exc)}, ensure_ascii=False)}\n\n"
-        finally:
-            if not task.done():
-                task.cancel()
 
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -350,7 +446,7 @@ def _isolated_direct_stream(prompt: str, provider: str, max_tokens: int) -> Stre
 async def digital_twin_main_assistant(request: DigitalTwinMainAssistantRequest) -> dict:
     """Main-monitor contract; independent from sensor analysis and SAGA RAG chat."""
     return await _isolated_direct_answer(
-        _main_assistant_prompt(request), request.provider, request.max_tokens
+        _main_assistant_prompt(request), request.provider, request.max_tokens, request.language
     )
 
 
@@ -359,7 +455,7 @@ async def digital_twin_main_assistant_stream(
     request: DigitalTwinMainAssistantRequest,
 ) -> StreamingResponse:
     return _isolated_direct_stream(
-        _main_assistant_prompt(request), request.provider, request.max_tokens
+        _main_assistant_prompt(request), request.provider, request.max_tokens, request.language
     )
 
 
@@ -367,7 +463,7 @@ async def digital_twin_main_assistant_stream(
 async def digital_twin_sensor_assistant(request: DigitalTwinSensorAssistantRequest) -> dict:
     """Selected-sensor contract; independent from main-monitor and SAGA RAG chat."""
     return await _isolated_direct_answer(
-        _sensor_assistant_prompt(request), request.provider, request.max_tokens
+        _sensor_assistant_prompt(request), request.provider, request.max_tokens, request.language
     )
 
 
@@ -376,64 +472,24 @@ async def digital_twin_sensor_assistant_stream(
     request: DigitalTwinSensorAssistantRequest,
 ) -> StreamingResponse:
     return _isolated_direct_stream(
-        _sensor_assistant_prompt(request), request.provider, request.max_tokens
+        _sensor_assistant_prompt(request), request.provider, request.max_tokens, request.language
     )
 
 
 @app.post("/api/digital-twin/chat/direct")
 async def digital_twin_direct_chat(request: DigitalTwinDirectChatRequest) -> dict:
     """Answer the supplied question once, without RAG planning or review."""
-    _digital_twin_provider_ready(request.provider)
-    model, effort = _digital_twin_direct_model(request.provider)
-    try:
-        with app.state.reasoner.use_provider(request.provider):
-            answer = await app.state.reasoner.answer(
-                request.message, model=model, reasoning_effort=effort,
-                max_tokens=request.max_tokens, disable_reasoning=effort is None,
-            )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"직답 LLM 호출 실패: {exc}") from exc
-    return {"answer": answer, "model": model, "provider": request.provider}
+    return await _isolated_direct_answer(
+        request.message, request.provider, request.max_tokens
+    )
 
 
 @app.post("/api/digital-twin/chat/direct/stream")
 async def digital_twin_direct_chat_stream(request: DigitalTwinDirectChatRequest) -> StreamingResponse:
     """Stream the one-pass answer; never run the multi-stage chat pipeline."""
-    _digital_twin_provider_ready(request.provider)
-    model, effort = _digital_twin_direct_model(request.provider)
-
-    async def events():
-        queue: asyncio.Queue[str] = asyncio.Queue()
-
-        async def on_delta(text: str) -> None:
-            await queue.put(text)
-
-        async def run() -> str:
-            with app.state.reasoner.use_provider(request.provider):
-                return await app.state.reasoner.answer_stream(
-                    request.message, model=model, reasoning_effort=effort,
-                    max_tokens=request.max_tokens, on_delta=on_delta,
-                    disable_reasoning=effort is None,
-                )
-
-        task = asyncio.create_task(run())
-        try:
-            while not task.done() or not queue.empty():
-                try:
-                    delta = await asyncio.wait_for(queue.get(), timeout=0.25)
-                except asyncio.TimeoutError:
-                    continue
-                yield f"event: token\ndata: {json.dumps({'text': delta}, ensure_ascii=False)}\n\n"
-            answer = await task
-            yield f"event: answer\ndata: {json.dumps({'answer': answer, 'model': model, 'provider': request.provider}, ensure_ascii=False)}\n\n"
-        except Exception as exc:
-            yield f"event: error\ndata: {json.dumps({'detail': str(exc)}, ensure_ascii=False)}\n\n"
-        finally:
-            if not task.done():
-                task.cancel()
-
-    return StreamingResponse(events(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _isolated_direct_stream(
+        request.message, request.provider, request.max_tokens
+    )
 
 
 @app.get("/api/digital-twin/state/latest")
