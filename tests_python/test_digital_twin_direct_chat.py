@@ -79,7 +79,12 @@ def test_main_and_sensor_assistants_have_separate_contracts_and_prompts():
 
         main = client.post("/api/integrations/digital-twin/main", json={
             "question": "압력 보완을 멈추는 방법은?", "provider": "service_hub",
-            "request_kind": "user_query", "context": {"station_status": "WARNING"},
+            "request_kind": "user_query", "context": {
+                "station_status": "WARNING",
+                "consolidated_response_guidance": {
+                    "full_plan_delivered_separately": True,
+                },
+            },
         })
         sensor = client.post("/api/integrations/digital-twin/sensor/stream", json={
             "sensor_id": "GD-0801", "question": "이 경보의 원인은?", "provider": "groq",
@@ -93,6 +98,8 @@ def test_main_and_sensor_assistants_have_separate_contracts_and_prompts():
         assert "[DIGITAL_TWIN_MAIN_ASSISTANT]" in main_prompt
         assert "압력 보완을 멈추는 방법은?" in main_prompt
         assert "질문과 무관한 전체 설비 상태 보고로 바꾸지 마세요" in main_prompt
+        assert "해당 조치 목록을 반복하지 말고" in main_prompt
+        assert reasoner.calls[0][3]["max_tokens"] == 900
         assert "[DIGITAL_TWIN_SENSOR_ASSISTANT]" in sensor_prompt
         assert "GD-0801 전용" in sensor_prompt
         assert "이 경보의 원인은?" in sensor_prompt

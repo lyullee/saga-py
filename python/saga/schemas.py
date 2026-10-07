@@ -51,7 +51,9 @@ class DigitalTwinMainAssistantRequest(BaseModel):
     request_kind: Literal["user_query", "automatic_analysis"] = "user_query"
     provider: Literal["service_hub", "groq"] = "service_hub"
     language: Literal["ko", "en"] = "ko"
-    max_tokens: int = Field(default=2200, ge=128, le=3000)
+    # Main-monitor answers are an operator headline. The digital twin renders
+    # deterministic consequence cards and the full response plan separately.
+    max_tokens: int = Field(default=900, ge=128, le=3000)
 
 
 class DigitalTwinSensorAssistantRequest(BaseModel):

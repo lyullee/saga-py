@@ -52,6 +52,12 @@ Distinct API families isolate responsibilities:
 | `/api/digital-twin/chat/direct` (+ `/stream`) | Legacy-compatible direct twin conversation path. |
 | `/api/digital-twin/state/latest` | Most recent submitted twin state, if available. |
 
+The main integration is an operator-headline channel with a 900-token default
+ceiling. When `consolidated_response_guidance.full_plan_delivered_separately`
+is present, it summarizes only the first action and verification condition;
+the digital twin remains responsible for rendering the complete staged plan.
+The sensor channel retains its larger detailed-analysis budget.
+
 The twin sends `output_language` and current simulation evidence to the main/sensor integration request. Consequence estimates remain calculated in the twin and travel as data in the context; choosing English must never disable, replace or recompute HyRAM output. SAGA's direct path is designed for short, answer-focused replies, separate from the fuller document RAG workflow. The integration is still an advisory assistant: it cannot verify real valve feedback or issue real safety commands.
 
 ## 6. HTTP API and administration
