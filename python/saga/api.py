@@ -245,6 +245,71 @@ def _digital_twin_provider_ready(provider: str) -> None:
         raise HTTPException(status_code=503, detail=f"선택한 제공자({provider})의 API 키가 설정되지 않았습니다.")
 
 
+_DIRECT_CONTEXT_UNIT_SUFFIXES = (
+    ("_kw_m2", "kW/m2"),
+    ("_w_m2", "W/m2"),
+    ("_mpa_abs", "MPa"),
+    ("temperature_c", "°C"),
+    ("temp_c", "°C"),
+    ("_volpct_h2", "vol%_H2"),
+    ("_diameter_mm", "mm"),
+    ("_duration_s", "s"),
+    ("_distance_m", "m"),
+    ("_radius_m", "m"),
+    ("_mpa", "MPa"),
+    ("_kpa", "kPa"),
+    ("_pa", "Pa"),
+    ("_bar", "bar"),
+    ("_kg_s", "kg/s"),
+    ("_g_s", "g/s"),
+    ("_degc", "°C"),
+    ("_ppm", "ppm"),
+    ("_time_s", "s"),
+    ("_kg", "kg"),
+    ("_percent", "%"),
+    ("_pct", "%"),
+)
+
+
+def _direct_measurement_evidence(context: object) -> str:
+    """Project structured live values into explicit value/unit pairs.
+
+    API contexts often encode a unit in a key such as ``effect_distance_m``
+    or in a sibling ``unit`` field. The safety guard needs the equivalent
+    visible pair (``5.5 m``) so it does not reject a supported model sentence.
+    """
+
+    pairs: list[str] = []
+
+    def append(value: object, unit: object) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        if not isinstance(unit, str) or not unit.strip():
+            return
+        pairs.append(f"{value:g} {unit.strip()}")
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            append(value.get("value"), value.get("unit"))
+            for key, child in value.items():
+                if isinstance(child, bool):
+                    continue
+                if isinstance(child, (int, float)):
+                    normalized = str(key).lower()
+                    for suffix, unit in _DIRECT_CONTEXT_UNIT_SUFFIXES:
+                        if normalized.endswith(suffix):
+                            append(child, unit)
+                            break
+                elif isinstance(child, (dict, list, tuple)):
+                    visit(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                visit(child)
+
+    visit(context)
+    return "; ".join(dict.fromkeys(pairs)) or "(없음)"
+
+
 def _main_assistant_prompt(request: DigitalTwinMainAssistantRequest) -> str:
     history = "\n".join(f"{turn.role}: {turn.content}" for turn in request.history)[-1800:]
     if request.request_kind == "user_query":
@@ -269,6 +334,9 @@ def _main_assistant_prompt(request: DigitalTwinMainAssistantRequest) -> str:
            if request.language == "en" else "\n\n")
         + f"사용자 요청:\n{request.question}\n\n"
         f"최근 대화(현재 데이터보다 우선하지 않음):\n{history or '(없음)'}\n\n"
+        "허용된 계산값(아래 값과 단위만 그대로 인용):\n"
+        + _direct_measurement_evidence(request.context)
+        + "\n\n"
         "현재 계산 데이터(JSON):\n"
         + json.dumps(request.context, ensure_ascii=False, default=str)[:7000]
     )[:10000]
@@ -292,6 +360,9 @@ def _sensor_assistant_prompt(request: DigitalTwinSensorAssistantRequest) -> str:
         + ("Answer in English. Keep sensor tags, numerical values, and Korean source names exact.\n\n"
            if request.language == "en" else "\n\n")
         + f"사용자 요청:\n{question}\n\n"
+        "허용된 계산값(아래 값과 단위만 그대로 인용):\n"
+        + _direct_measurement_evidence(request.context)
+        + "\n\n"
         "선택 센서 계산 데이터(JSON):\n"
         + json.dumps(request.context, ensure_ascii=False, default=str)[:7600]
     )[:10000]
@@ -317,6 +388,11 @@ _DIRECT_MEASUREMENT_RE = re.compile(
 
 def _canonical_measurement(value: str) -> str:
     normalized = value.strip().lower().replace(",", ".")
+    normalized = re.sub(
+        r"(?<![\w.])[+-]?(?:\d+(?:\.\d+)?|\.\d+)",
+        lambda match: f"{float(match.group(0)):.12g}",
+        normalized,
+    )
     normalized = normalized.replace("℃", "°c").replace("²", "2")
     normalized = re.sub(r"degrees?\s+c(?:elsius)?", "°c", normalized)
     normalized = re.sub(r"deg\s*c", "°c", normalized)

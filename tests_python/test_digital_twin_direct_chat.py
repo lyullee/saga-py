@@ -135,6 +135,95 @@ def test_direct_measurement_guard_keeps_supplied_values_and_removes_invented_val
         assert answer.count("입력 데이터에 없는 구체 수치는") == 1
 
 
+def test_main_assistant_guard_accepts_value_unit_pairs_derived_from_context():
+    with TestClient(app) as client:
+        reasoner = FakeReasoner(
+            answer_text=(
+                "GD-0901에서 수소 농도 2.0 vol%_H2가 관측됐고 영향거리는 5.5 m입니다. "
+                "최대 과압은 12.4 kPa, 최대 열복사는 5.8 kW/m2입니다. "
+                "10 minutes 동안 대기하세요."
+            )
+        )
+        app.state.reasoner = reasoner
+        app.state.settings = SimpleNamespace(
+            service_hub_api_key="test-key", groq_api_key="test-key",
+            service_hub_direct_model="llama-3.3-70b", groq_direct_model="qwen/qwen3.8-27b",
+        )
+
+        response = client.post("/api/integrations/digital-twin/main", json={
+            "question": "현재 사고를 요약해줘.",
+            "provider": "groq",
+            "request_kind": "user_query",
+            "context": {
+                "active_alerts": [{
+                    "sensor_id": "GD-0901", "value": 2.0, "unit": "vol%_H2",
+                }],
+                "impact_results": [{
+                    "effect_distance_m": 5.5,
+                    "maximum_overpressure_kpa": 12.4,
+                    "maximum_heat_flux_kw_m2": 5.8,
+                }],
+            },
+        })
+
+        assert response.status_code == 200
+        answer = response.json()["answer"]
+        assert "2.0 vol%_H2" in answer
+        assert "5.5 m" in answer
+        assert "12.4 kPa" in answer
+        assert "5.8 kW/m2" in answer
+        assert "10 minutes" not in answer
+        assert answer.count("입력 데이터에 없는 구체 수치는") == 1
+        prompt = reasoner.calls[0][2]
+        assert "2 vol%_H2" in prompt
+        assert "5.5 m" in prompt
+        assert "12.4 kPa" in prompt
+        assert "5.8 kW/m2" in prompt
+
+
+def test_sensor_assistant_guard_accepts_live_process_field_units():
+    with TestClient(app) as client:
+        reasoner = FakeReasoner(
+            answer_text=(
+                "PT-0901 압력은 69.4 MPa, 온도는 25 °C이며 유량은 13.5 g/s입니다. "
+                "재고는 41.2 kg이고 검지기 농도는 850 ppm입니다."
+            )
+        )
+        app.state.reasoner = reasoner
+        app.state.settings = SimpleNamespace(
+            service_hub_api_key="test-key", groq_api_key="test-key",
+            service_hub_direct_model="llama-3.3-70b", groq_direct_model="qwen/qwen3.8-27b",
+        )
+
+        response = client.post("/api/integrations/digital-twin/sensor", json={
+            "sensor_id": "PT-0901",
+            "question": "현재 공정값을 설명해줘.",
+            "provider": "groq",
+            "request_kind": "user_query",
+            "context": {
+                "pressure_mpa": 69.4,
+                "temperature_c": 25.0,
+                "mass_flow_g_s": 13.5,
+                "inventory_kg": 41.2,
+                "detector_ppm": 850,
+            },
+        })
+
+        assert response.status_code == 200
+        answer = response.json()["answer"]
+        assert "69.4 MPa" in answer
+        assert "25 °C" in answer
+        assert "13.5 g/s" in answer
+        assert "41.2 kg" in answer
+        assert "850 ppm" in answer
+        prompt = reasoner.calls[0][2]
+        assert "69.4 MPa" in prompt
+        assert "25 °C" in prompt
+        assert "13.5 g/s" in prompt
+        assert "41.2 kg" in prompt
+        assert "850 ppm" in prompt
+
+
 def test_english_sensor_stream_never_emits_raw_unsupported_measurement():
     with TestClient(app) as client:
         reasoner = FakeReasoner(
