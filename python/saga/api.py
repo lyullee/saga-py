@@ -370,14 +370,15 @@ def _sensor_assistant_prompt(request: DigitalTwinSensorAssistantRequest) -> str:
 
 _DIRECT_MEASUREMENT_RE = re.compile(
     r"(?<![\w.])"
-    r"[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)"
-    r"(?:\s*(?:-|~|–|—|to|부터|에서)\s*[+-]?(?:\d+(?:[.,]\d+)?|\.\d+))?"
-    r"\s*(?:"
+    r"(?P<first>[+-]?(?:\d+(?:[.,]\d+)?|\.\d+))"
+    r"(?:\s*(?:-|~|–|—|to|부터|에서)\s*"
+    r"(?P<second>[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)))?"
+    r"\s*(?P<unit>"
     r"kW\s*/\s*m(?:\^?2|²)|W\s*/\s*m(?:\^?2|²)|"
     r"kg\s*/\s*s|g\s*/\s*s|kg\s*/\s*h|kg\s*/\s*min|"
     r"vol\s*%\s*(?:_?\s*H2)?|ppm|"
     r"MPa|kPa|Pa|bar|"
-    r"°\s*C|℃|deg\s*C|degrees?\s+C(?:elsius)?|"
+    r"°\s*C|℃|[oº]\s*C|deg\s*C|degrees?\s+C(?:elsius)?|C|"
     r"millimet(?:er|re)s?|centimet(?:er|re)s?|met(?:er|re)s?|mm|cm|m|"
     r"seconds?|secs?|minutes?|mins?|hours?|hrs?|s|min|h|"
     r"kilograms?|grams?|kg|g|%"
@@ -394,6 +395,8 @@ def _canonical_measurement(value: str) -> str:
         normalized,
     )
     normalized = normalized.replace("℃", "°c").replace("²", "2")
+    normalized = re.sub(r"(?:°|º|o)\s*c\b", "°c", normalized)
+    normalized = re.sub(r"(?<=\d)\s*c\b", "°c", normalized)
     normalized = re.sub(r"degrees?\s+c(?:elsius)?", "°c", normalized)
     normalized = re.sub(r"deg\s*c", "°c", normalized)
     normalized = re.sub(r"\bseconds?\b|\bsecs?\b", "s", normalized)
@@ -408,6 +411,24 @@ def _canonical_measurement(value: str) -> str:
     return normalized
 
 
+def _measurement_atoms(text: str) -> set[str]:
+    """Return canonical value/unit atoms, expanding a shared-unit range.
+
+    Treating a range as one opaque string caused grounded values to be removed
+    when the source used ``5-10 MPa`` and the answer used ``5 MPa to 10 MPa``.
+    Atomic comparison also makes equivalent time and temperature spellings
+    compare consistently.
+    """
+
+    atoms: set[str] = set()
+    for match in _DIRECT_MEASUREMENT_RE.finditer(text):
+        unit = match.group("unit")
+        atoms.add(_canonical_measurement(f"{match.group('first')} {unit}"))
+        if match.group("second") is not None:
+            atoms.add(_canonical_measurement(f"{match.group('second')} {unit}"))
+    return atoms
+
+
 def _guard_direct_measurements(answer: str, allowed_text: str, language: str | None = None) -> str:
     """Remove precise value/unit claims absent from the supplied direct prompt.
 
@@ -418,10 +439,7 @@ def _guard_direct_measurements(answer: str, allowed_text: str, language: str | N
     """
     if not answer:
         return answer
-    allowed = {
-        _canonical_measurement(match.group(0))
-        for match in _DIRECT_MEASUREMENT_RE.finditer(allowed_text)
-    }
+    allowed = _measurement_atoms(allowed_text)
     resolved_language = language or ("ko" if re.search(r"[가-힣]", allowed_text + answer) else "en")
     notice = (
         "입력 데이터에 없는 구체 수치는 제시하지 않습니다. 현장 계측값과 적용 기준을 확인하세요."
@@ -435,10 +453,7 @@ def _guard_direct_measurements(answer: str, allowed_text: str, language: str | N
         stripped = part.strip()
         if not stripped:
             continue
-        measurements = {
-            _canonical_measurement(match.group(0))
-            for match in _DIRECT_MEASUREMENT_RE.finditer(stripped)
-        }
+        measurements = _measurement_atoms(stripped)
         if measurements - allowed:
             if not inserted_notice:
                 cleaned.append(notice)

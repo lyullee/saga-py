@@ -135,6 +135,65 @@ def test_direct_measurement_guard_keeps_supplied_values_and_removes_invented_val
         assert answer.count("입력 데이터에 없는 구체 수치는") == 1
 
 
+def test_direct_measurement_guard_preserves_equivalent_units_and_range_spelling():
+    with TestClient(app) as client:
+        reasoner = FakeReasoner(
+            answer_text=(
+                "The test range was -33 °C to -40 °C and the response took 10 minutes. "
+                "An unreported pressure of 12 bar was also observed."
+            )
+        )
+        app.state.reasoner = reasoner
+        app.state.settings = SimpleNamespace(
+            service_hub_api_key="test-key", groq_api_key="test-key",
+            service_hub_direct_model="llama-3.3-70b", groq_direct_model="qwen/qwen3.8-27b",
+        )
+
+        response = client.post("/api/integrations/digital-twin/main", json={
+            "question": "Summarize the historical observation.",
+            "provider": "groq",
+            "language": "en",
+            "request_kind": "user_query",
+            "context": {
+                "historical_observation": {
+                    "description": (
+                        "Hydrogen was pre-chilled between -33oC and -40oC. "
+                        "Responders arrived within 10 min."
+                    ),
+                },
+            },
+        })
+
+        assert response.status_code == 200
+        answer = response.json()["answer"]
+        assert "-33 °C to -40 °C" in answer
+        assert "10 minutes" in answer
+        assert "12 bar" not in answer
+        assert answer.count("No precise value was supplied") == 1
+
+
+def test_direct_measurement_guard_expands_shared_unit_ranges():
+    with TestClient(app) as client:
+        reasoner = FakeReasoner(
+            answer_text="The expected operating interval is 5 MPa to 10 MPa."
+        )
+        app.state.reasoner = reasoner
+        app.state.settings = SimpleNamespace(
+            service_hub_api_key="test-key", groq_api_key="test-key",
+            service_hub_direct_model="llama-3.3-70b", groq_direct_model="qwen/qwen3.8-27b",
+        )
+
+        response = client.post("/api/digital-twin/chat/direct", json={
+            "message": "The documented operating interval is 5-10 MPa.",
+            "provider": "service_hub",
+        })
+
+        assert response.status_code == 200
+        assert response.json()["answer"] == (
+            "The expected operating interval is 5 MPa to 10 MPa."
+        )
+
+
 def test_main_assistant_guard_accepts_value_unit_pairs_derived_from_context():
     with TestClient(app) as client:
         reasoner = FakeReasoner(
