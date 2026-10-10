@@ -389,6 +389,12 @@ _DIRECT_MEASUREMENT_RE = re.compile(
 
 def _canonical_measurement(value: str) -> str:
     normalized = value.strip().lower().replace(",", ".")
+    # Some public incident exports contain a replacement-character sequence
+    # between the numeric temperature and ``C`` (for example ``-40��C``).
+    # Treat that sequence as the degree marker only when it is immediately
+    # followed by C; this preserves the fail-closed behavior for unrelated
+    # corrupted numbers while allowing an LLM to restyle a supplied fact.
+    normalized = re.sub(r"[�]{1,4}\s*c\b", "°c", normalized)
     normalized = re.sub(
         r"(?<![\w.])[+-]?(?:\d+(?:\.\d+)?|\.\d+)",
         lambda match: f"{float(match.group(0)):.12g}",
