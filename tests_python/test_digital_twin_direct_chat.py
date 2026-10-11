@@ -337,3 +337,45 @@ def test_english_sensor_stream_never_emits_raw_unsupported_measurement():
         assert "10 minutes" not in response.text
         assert "No precise value was supplied" in response.text
         assert "event: answer" in response.text
+
+
+def test_stream_validates_before_any_token_event_is_emitted():
+    """A direct stream must never leak an invented measurement transiently.
+
+    The UI renders token events as they arrive.  Checking only the final
+    answer would miss a regression where an unsupported value is briefly sent
+    and then removed from the answer event.  This parses each SSE event and
+    asserts that the unsupported atom is absent from every token payload.
+    """
+    import json
+
+    with TestClient(app) as client:
+        reasoner = FakeReasoner(
+            stream_text="Pressure is 88 MPa. Isolate the affected section."
+        )
+        app.state.reasoner = reasoner
+        app.state.settings = SimpleNamespace(
+            service_hub_api_key="test-key", groq_api_key="test-key",
+            service_hub_direct_model="llama-3.3-70b", groq_direct_model="qwen/qwen3.8-27b",
+        )
+
+        response = client.post("/api/digital-twin/chat/direct/stream", json={
+            "message": "What should I do?", "provider": "groq", "language": "en",
+        })
+
+        assert response.status_code == 200
+        events = [block for block in response.text.split("\n\n") if block.strip()]
+        token_payloads = [
+            json.loads(block.split("data: ", 1)[1])["text"]
+            for block in events
+            if block.startswith("event: token")
+        ]
+        answer_payload = next(
+            json.loads(block.split("data: ", 1)[1])
+            for block in events
+            if block.startswith("event: answer")
+        )
+        assert token_payloads
+        assert all("88 MPa" not in token for token in token_payloads)
+        assert "88 MPa" not in answer_payload["answer"]
+        assert "No precise value was supplied" in answer_payload["answer"]
