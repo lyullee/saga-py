@@ -231,6 +231,12 @@ async def evaluate_digital_twin_state(request: DigitalTwinHazopRequest) -> Digit
         raise HTTPException(status_code=422, detail=f"HAZOP 상태 평가 실패: {exc}") from exc
 
 
+@app.post("/api/digital-twin/hazop/direct", response_model=DigitalTwinHazopResponse)
+async def evaluate_digital_twin_direct(request: DigitalTwinHazopRequest) -> DigitalTwinHazopResponse:
+    """Deterministic integration endpoint used by the digital twin."""
+    return await app.state.hazop.evaluate_direct(request)
+
+
 def _digital_twin_direct_model(provider: str) -> tuple[str, str | None]:
     settings = app.state.settings
     if provider == "groq":
@@ -329,15 +335,22 @@ def _main_assistant_prompt(request: DigitalTwinMainAssistantRequest) -> str:
         "[DIGITAL_TWIN_MAIN_ASSISTANT]\n"
         "당신은 가상 수소충전소 메인 운전 화면의 직답형 보조자입니다. 추론 과정이나 내부 규칙명은 "
         "노출하지 않습니다. 제공된 계산값만 사용하고 피해영향 재계산을 사용자에게 요구하지 마세요. "
+        "JSON 필드명이나 내부 변수명을 답변에 쓰지 말고 현장 사용자가 이해할 한국어로 표현하세요. "
+        "저장뱅크 압력 질문에 특정 뱅크가 지정되지 않으면 저압·중압·고압을 각각 이름과 값으로 구분하세요. "
         f"{mode} "
         + ("Answer in English. Keep sensor tags, numerical values, and Korean source names exact.\n\n"
            if request.language == "en" else "\n\n")
         + f"사용자 요청:\n{request.question}\n\n"
+        + "질문 대상 뱅크별 확인값:\n" + str(request.context.get("bank_pressure_summary") or "(없음)") + "\n\n"
         f"최근 대화(현재 데이터보다 우선하지 않음):\n{history or '(없음)'}\n\n"
         "허용된 계산값(아래 값과 단위만 그대로 인용):\n"
         + _direct_measurement_evidence(request.context)
         + "\n\n"
-        "현재 계산 데이터(JSON):\n"
+        "냉각 피드백과 조치 전후 관측값:\n"
+        + str(request.context.get("cooling_feedback") or "(없음)")
+        + "\n전체 상태는 station_status와 활성 화염 신호를 기준으로 판단하세요. 개별 정상 센서를 전체 정상으로 확대하지 마세요. 상태를 판단해야 한다는 일반 지시로 끝내지 말고 제공된 화염 신호가 현재 활성인지 직접 답하세요.\n"
+        + "가정 누출의 HyRAM 수치는 실제 외부 화재의 열유속이나 냉각 효과가 아닙니다. 가정 누출 수치로 화재가 관리됨, 피해가 제한됨, 안전함을 주장하지 마세요. 냉각 효과는 미조치 대조 실험 없이는 확정하지 말고, 관측 전후 온도와 그 한계를 그대로 설명하세요.\n"
+        + "현재 계산 데이터(JSON):\n"
         + json.dumps(request.context, ensure_ascii=False, default=str)[:7000]
     )[:10000]
 
@@ -356,6 +369,7 @@ def _sensor_assistant_prompt(request: DigitalTwinSensorAssistantRequest) -> str:
         "[DIGITAL_TWIN_SENSOR_ASSISTANT]\n"
         f"당신은 {request.sensor_id} 전용 직답형 센서 분석 보조자입니다. 다른 화면의 대화나 SAGA 문서검색 "
         "세션을 사용하지 않습니다. 실제 신호, 경보 이력, 모의 누출, 가정 누출을 구분하고 제공된 피해영향 "
+        "값을 설명할 때 JSON 필드명이나 내부 변수명을 그대로 노출하지 마세요. "
         f"결과만 해석하세요. {mode} "
         + ("Answer in English. Keep sensor tags, numerical values, and Korean source names exact.\n\n"
            if request.language == "en" else "\n\n")
@@ -363,7 +377,10 @@ def _sensor_assistant_prompt(request: DigitalTwinSensorAssistantRequest) -> str:
         "허용된 계산값(아래 값과 단위만 그대로 인용):\n"
         + _direct_measurement_evidence(request.context)
         + "\n\n"
-        "선택 센서 계산 데이터(JSON):\n"
+        "냉각 조치 비교의 기준값(조치 시점과 현재값을 다른 센서값으로 대체하거나 반올림하지 마세요):\n"
+        + str(request.context.get("cooling_feedback") or "(없음)")
+        + "\n가정 누출 HyRAM 수치를 실제 외부 화재나 냉각 효과로 해석하지 마세요. 미조치 대조 실험 없이 효과를 단정하지 말고 조치 전후 관측 온도만 비교하세요.\n"
+        + "\n\n선택 센서 계산 데이터(JSON):\n"
         + json.dumps(request.context, ensure_ascii=False, default=str)[:7600]
     )[:10000]
 
