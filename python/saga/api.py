@@ -370,10 +370,19 @@ def _sensor_assistant_prompt(request: DigitalTwinSensorAssistantRequest) -> str:
         f"당신은 {request.sensor_id} 전용 직답형 센서 분석 보조자입니다. 다른 화면의 대화나 SAGA 문서검색 "
         "세션을 사용하지 않습니다. 실제 신호, 경보 이력, 모의 누출, 가정 누출을 구분하고 제공된 피해영향 "
         "값을 설명할 때 JSON 필드명이나 내부 변수명을 그대로 노출하지 마세요. "
+        "현재 임계 초과와 유지 중인 과거 경보는 서로 다릅니다. ALARM_HISTORY 또는 history_only=true이면 "
+        "과거 경보가 남아 있는 상태로 설명하고, 센서 고장이나 시스템 초기화를 원인으로 추측하지 마세요. "
+        "GOOD 품질과 0 농도는 현재 정상 수신·무검출 근거이며 경보 이력을 고장 근거로 바꾸지 마세요. "
+        "현재 방출이나 다른 활성 경보가 있으면 별도로 설명하고, 복구 승인과 ESD 여부는 제공된 조치 상태만 인용하세요. "
         f"결과만 해석하세요. {mode} "
         + ("Answer in English. Keep sensor tags, numerical values, and Korean source names exact.\n\n"
            if request.language == "en" else "\n\n")
         + f"사용자 요청:\n{question}\n\n"
+        + "현재 검출·과거 경보·조치 상태(아래 구분을 우선 적용):\n"
+        + json.dumps({"sensor_status": request.context.get("sensor_status"),
+                      "alarm_status_evidence": request.context.get("alarm_status_evidence"),
+                      "response_status": request.context.get("response_status")}, ensure_ascii=False)
+        + "\n\n"
         "허용된 계산값(아래 값과 단위만 그대로 인용):\n"
         + _direct_measurement_evidence(request.context)
         + "\n\n"

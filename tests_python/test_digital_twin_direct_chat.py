@@ -379,3 +379,15 @@ def test_stream_validates_before_any_token_event_is_emitted():
         assert all("88 MPa" not in token for token in token_payloads)
         assert "88 MPa" not in answer_payload["answer"]
         assert "No precise value was supplied" in answer_payload["answer"]
+
+
+def test_sensor_alarm_history_evidence_precedes_large_context_and_does_not_imply_sensor_failure():
+    from saga.api import DigitalTwinSensorAssistantRequest, _sensor_assistant_prompt
+    prompt = _sensor_assistant_prompt(DigitalTwinSensorAssistantRequest(
+        sensor_id="GD-1701", context={"sensor_status":"ALARM_HISTORY",
+        "alarm_status_evidence":{"history_only":True,"current_trigger_count":0,"signal_quality":"GOOD"},
+        "response_status":{"recovery_approved":True,"esd_requested":False},
+        "large_unrelated_context":"x"*10000}))
+    assert '"history_only": true' in prompt[:2000]
+    assert '"recovery_approved": true' in prompt[:2000]
+    assert "센서 고장이나 시스템 초기화를 원인으로 추측하지 마세요" in prompt
