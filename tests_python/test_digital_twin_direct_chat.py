@@ -391,3 +391,5 @@ def test_sensor_alarm_history_evidence_precedes_large_context_and_does_not_imply
     assert '"history_only": true' in prompt[:2000]
     assert '"recovery_approved": true' in prompt[:2000]
     assert "센서 고장이나 시스템 초기화를 원인으로 추측하지 마세요" in prompt
+    assert "0은 화염 미검지, 1은 화염 감지" in prompt
+    assert "폭발 검지나 수소 누출 유무로 바꿔 설명하지 마세요" in prompt
