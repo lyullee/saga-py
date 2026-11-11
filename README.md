@@ -4,6 +4,8 @@
 
 The badge DOI resolves to the latest archived release. Earlier versions retain their own DOIs.
 
+Version 2.0.2 supports direct analysis from Hydrogen Station Dynamic Simulator 0.1.3. It clarifies flame detector and signal-quality semantics, restricts outbound requests to HTTP(S), and uses hardened XML parsers for ingested documents.
+
 Original project software and associated documentation are available under the [MIT license](LICENSE). Bundled third-party libraries and assets retain their respective notices and terms.
 
 Python/FastAPI safety-knowledge assistant for Korean gas standards, law and HAZOP analysis. SAGA-PY supports a standalone document-grounded chat and separate, direct APIs for a hydrogen-station digital twin's main conversation and selected-sensor analysis.

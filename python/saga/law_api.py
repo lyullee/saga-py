@@ -17,8 +17,10 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-from xml.etree import ElementTree as ET
+from urllib.request import Request
+
+from .web_transport import open_web_request
+from defusedxml import ElementTree as ET
 
 import pymupdf
 
@@ -287,7 +289,7 @@ class LawApiIngestor:
             f"{self.base_url}/{endpoint}?{query}",
             headers={"Accept": "application/xml", "User-Agent": "SAGA-law-ingestor/1.0"},
         )
-        with urlopen(request, timeout=self.timeout) as response:
+        with open_web_request(request, timeout=self.timeout) as response:
             return response.read()
 
     def fetch(self, abbreviation: str, name: str | None = None) -> tuple[LawDocument, bytes]:

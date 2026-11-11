@@ -10,14 +10,15 @@ self-contained event chunks while retaining the original XLSX.
 
 import hashlib
 import re
-import urllib.request
-import xml.etree.ElementTree as ET
+from urllib.request import Request
+from defusedxml import ElementTree as ET
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from .database import Database
+from .web_transport import open_web_request
 from .indexer import PdfIndexer
 from .text import normalize_text
 
@@ -125,7 +126,7 @@ def _download(url: str, destination: Path, *, force: bool = False) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists() and destination.stat().st_size > 0 and not force:
         return destination
-    request = urllib.request.Request(
+    request = Request(
         url,
         headers={
             "User-Agent": "SAGA-Safety-RAG/2.1 (+public-source-ingestor)",
@@ -134,7 +135,7 @@ def _download(url: str, destination: Path, *, force: bool = False) -> Path:
     )
     temporary = destination.with_suffix(destination.suffix + ".part")
     try:
-        with urllib.request.urlopen(request, timeout=90) as response, temporary.open("wb") as output:
+        with open_web_request(request, timeout=90) as response, temporary.open("wb") as output:
             while True:
                 block = response.read(1024 * 1024)
                 if not block:
